@@ -1,0 +1,287 @@
+---
+title: 'ECON 414: Final Project'
+author: "Sergio Cornejo, Angelina Chang, Claire Szilagyi, Hanna Fei"
+date: "12/19/2020"
+output:
+ bookdown::html_document2:  
+  toc: true # table of content true
+  toc_depth: 2  # upto three depths of headings (specified by #, ## and ###)
+  theme: united  # many options for theme, this one is my favorite.
+  highlight: tango  # specifies the syntax highlighting style
+  fontsize: 16pt
+---
+
+```{r setup, include=FALSE}
+  knitr::opts_chunk$set(include = TRUE)  # TRUE for solution; FALSE for questions set
+  knitr::opts_chunk$set(echo = TRUE)
+  knitr::opts_chunk$set(message = FALSE)
+  knitr::opts_chunk$set(warning = FALSE)
+  knitr::opts_chunk$set(fig.height = 5, fig.width = 7, out.width = '100%', fig.align = "center")
+  options(width = 90)
+```
+
+# Introduction
+
+According to the World Health Organization (WHO), as of May 15, there have been more than 4 million 300 thousand coronavirus cases worldwide, and more than 290,000 deaths. 
+We are interested in investigate the factors that might cause the increase of confirmed coronavirus cases and deaths. By doing that, we first make the confirmed cases and deaths in chicago areas with some possible factors that might have casual relationship with in detail. By doing this we will know where the death and cases take place and observed if there is a spatial pattern among coronavirus in Chicago.
+  
+  
+  
+The graph below illustrates that the slope of the total number of deaths was at the highest between dates 03/16 and 06/08. The death since 06/08 has still been positive as more people are dying from coronavirus in Chicago.
+```{r,include=FALSE}
+library(plotly)
+libs<-c("tidyverse","GISTools","rgdal","spdep", "sp","ggplot2","ggthemes", "viridis", "tidyverse", "ggmap", "tmap")
+lapply(libs, require, character.only = TRUE)
+library(plotly)
+covid19_chitown<-readOGR("covid19_chitown.shp")
+covid19_chitown$test_rate<-(covid19_chitown$Totaltest/covid19_chitown$TotalPop)*100000
+```
+```{r, echo=F, message=F,fig.height = 4, fig.width = 5}
+library(ggplot2)
+library(ggthemes)
+data<-readRDS("weekly.RDS")
+data$WeekEnd<-as.Date(data$WeekEnd)
+p1<-ggplot(data =data, aes(x = WeekEnd, y = deaths))+
+    theme_economist_white(base_size = 14, gray_bg = FALSE) + scale_colour_economist() +
+    geom_line(size = 1.4) +
+    labs(x = "Date", y="Total number of deaths")+
+    scale_x_date(date_labels = "%m/%d", date_breaks="4 weeks")
+
+ggplotly(p1)
+
+
+tmap_mode("view")
+tm_shape(covid19_chitown)+
+  tm_polygons("Deathrate",  
+              style="quantile",
+              alpha=0.7,
+              palette = "OrRd", 
+              title="Death Rate in Chicago", 
+              popup.vars=c("Share of people 60 or older"="above60",
+                           "Population Density"="popdens",
+                           "Share of houses with 4 or more people"="crowdedHH",
+                           "Share of people with health insurance"="HIcov",
+                           "Share of people living below the poverty line"="belowpov"))+
+  tm_basemap(server="OpenStreetMap",alpha=0.5)
+```
+  
+From this map of death rate in Chicago, one can conclude that death rates are higher in neighborhoods that are further from downtown.
+  
+```{r, echo=F, message=F,fig.height = 4, fig.width = 5}
+tm_shape(covid19_chitown)+
+  tm_polygons("Caserate",  
+              style="quantile",
+              alpha=0.7,
+              palette = "OrRd", 
+              title="Case Rate in Chicago", 
+              popup.vars=c("Share of people 60 or older"="above60",
+                           "Population Density"="popdens",
+                           "Share of houses with 4 or more people"="crowdedHH",
+                           "Share of people with health insurance"="HIcov",
+                           "Share of people living below the poverty line"="belowpov",
+                           "Test Rate"="test_rate"))+
+  tm_basemap(server="OpenStreetMap",alpha=0.5)
+```
+  
+The map of case rates in Chicago illustrates that neighborhoods that are on the west side have higher case rates than neighborhoods that are either further north or further south.
+  
+# ESDA
+
+```{r, include=FALSE}
+coords<-coordinates(covid19_chitown)
+knn<-knearneigh(coords, k = 3, longlat = TRUE)
+knn_nb<-knn2nb(knn)
+knn_listw <- nb2listw(knn_nb,style="W")
+```
+
+## Moran's I and LISA map for Death Rates
+```{r, echo=F, message=F,fig.height = 4, fig.width = 5}
+knn_mat<-nb2mat(knn_nb, style="W")
+spat_lag<-knn_mat%*%covid19_chitown$Deathrate
+##head(spat_lag,5)
+covid19_chitown$w_Deathrate<-lag.listw(knn_listw, covid19_chitown$Deathrate)
+```
+```{r,include=F}
+g1<-ggplot(covid19_chitown@data, aes(x=Deathrate, y=w_Deathrate, label=GEOID)) + geom_point(color="darkorange")+
+  stat_smooth(method = "lm", formula =y~x, se=F, color="darkblue") +
+  scale_y_continuous(name = "Spatially lagged Death Rates") +
+  scale_x_continuous(name = "Death Rate")+
+  theme_economist_white(base_size = 17, gray_bg=FALSE)+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=12,face="bold"))
+```
+  
+This is the scatter plot of death rate and spatially death rates. From the plot conduct we learned that there is a positive relationship between them. There also appears to be a strong and positive autocorrelation.
+  
+```{r, echo=F, message=F,fig.height = 4, fig.width = 5}
+ggplotly(g1, tooltip = c("label", "x", "y"))
+
+```
+```{r,include=F}
+moran.mc(covid19_chitown$Deathrate, knn_listw, 999)
+covid19_chitown$Deathrate_std<-scale(covid19_chitown$Deathrate)%>%as.vector()
+moran.plot(covid19_chitown$Deathrate_std, listw = knn_listw, xlab = "Death Rates", ylab="Spatially lagged Death Rates")
+
+locali<-as.data.frame(localmoran(covid19_chitown$Deathrate, knn_listw, alternative = "two.sided", p.adjust.method="fdr"))
+
+covid19_chitown$localp<-locali[,5]
+
+covid19_chitown$w_Deathrate_std<-scale(covid19_chitown$w_Deathrate)
+
+covid19_chitown$label <- NA
+covid19_chitown$label[covid19_chitown$Deathrate_std >= 0 & covid19_chitown$w_Deathrate_std >= 0 & covid19_chitown$localp <= 0.05] <- "High-High"
+covid19_chitown$label[covid19_chitown$Deathrate_std <= 0 & covid19_chitown$w_Deathrate_std <= 0 & covid19_chitown$localp <= 0.05] <- "Low-Low"
+covid19_chitown$label[covid19_chitown$Deathrate_std >= 0 & covid19_chitown$w_Deathrate_std <= 0 & covid19_chitown$localp <= 0.05] <- "High-Low"
+covid19_chitown$label[covid19_chitown$Deathrate_std <= 0 & covid19_chitown$w_Deathrate_std >= 0 & covid19_chitown$localp <= 0.05] <- "Low-High"
+covid19_chitown$label[covid19_chitown$localp > 0.05] <- "Not Significant" 
+
+unique(covid19_chitown$label)
+
+  g1<-ggplot(covid19_chitown@data, aes(Deathrate_std, w_Deathrate_std,color=label, label=GEOID))+ 
+  theme_fivethirtyeight() +
+  geom_point(size=5)+ 
+  geom_hline(yintercept = 0, linetype = 'dashed')+ 
+  geom_vline(xintercept = 0, linetype = 'dashed')+ 
+  scale_colour_manual(values=c( "skyblue",  "#FFFFFF"))+ 
+  labs(x = "Death Rates", y="Spatially Lagged Death Rates")+ 
+  theme(axis.text=element_text(size=18),axis.title=element_text(size=18,face="bold"), legend.text=element_text(size=15))+
+  theme(legend.title=element_blank())+
+  ggtitle("Moran's I: 0.4574")
+```
+```{r, echo=F, message=F,fig.height = 4, fig.width = 5}
+ggplotly(g1, tooltip = c("label", "x", "y"))
+```
+  
+The Moran's I from the dataset is 0.4574. According to this result, 0.4574 was inside the critical region and one can reject the null hypothesis. In conclusion, the data is not randomly distributed over space.
+  
+```{r, echo=F, message=F,fig.height = 4, fig.width = 5}
+tmap_mode("view")
+tm_shape(covid19_chitown)+
+  tm_polygons("label",  
+              palette = c( "darkblue",  "#FFFFFF") ,
+              alpha=0.4, 
+              title="LISA map - Death Rates",
+              popup.vars=c("Share of people 60 or older"="above60",
+                           "Population Density"="popdens",
+                           "Share of houses with 4 or more people"="crowdedHH",
+                           "Share of people with health insurance"="HIcov",
+                           "Share of people living below the poverty line"="belowpov"))+
+  tm_basemap(server="OpenStreetMap",alpha=0.5)
+``` 
+  
+All the neighborhoods with p-values higher than .05 will be considered “Not significant”. In this LISA map, the neighborhoods with "low-low" are all around downtown Chicago.
+  
+## Moran's I and LISA map for Case Rates
+```{r,include=FALSE}
+coords<-coordinates(covid19_chitown)
+knn<-knearneigh(coords, k = 3, longlat = TRUE)
+knn_nb<-knn2nb(knn)
+knn_listw <- nb2listw(knn_nb,style="W")
+
+knn_mat<-nb2mat(knn_nb, style="W")
+spat_lag<-knn_mat%*%covid19_chitown$Caserate
+covid19_chitown$w_Caserate<-lag.listw(knn_listw, covid19_chitown$Caserate)
+
+
+moran.mc(covid19_chitown$Caserate, knn_listw, 999)
+```
+```{r,include=F}
+
+covid19_chitown$Caserate_std<-scale(covid19_chitown$Caserate)%>%as.vector()
+moran.plot(covid19_chitown$Caserate_std, listw = knn_listw, xlab = "Case Rates", ylab="Spatially lagged Case Rates")
+
+locali<-as.data.frame(localmoran(covid19_chitown$Caserate, knn_listw, alternative = "two.sided", p.adjust.method="fdr"))
+
+covid19_chitown$localp<-locali[,5]
+
+covid19_chitown$w_Caserate_std<-scale(covid19_chitown$w_Caserate)
+
+covid19_chitown$label <- NA
+covid19_chitown$label[covid19_chitown$Caserate_std >= 0 & covid19_chitown$w_Caserate_std >= 0 & covid19_chitown$localp <= 0.05] <- "High-High"
+covid19_chitown$label[covid19_chitown$Caserate_std <= 0 & covid19_chitown$w_Caserate_std <= 0 & covid19_chitown$localp <= 0.05] <- "Low-Low"
+covid19_chitown$label[covid19_chitown$Caserate_std >= 0 & covid19_chitown$w_Caserate_std <= 0 & covid19_chitown$localp <= 0.05] <- "High-Low"
+covid19_chitown$label[covid19_chitown$Caserate_std <= 0 & covid19_chitown$w_Caserate_std >= 0 & covid19_chitown$localp <= 0.05] <- "Low-High"
+covid19_chitown$label[covid19_chitown$localp > 0.05] <- "Not Significant" 
+
+
+g1<-ggplot(covid19_chitown@data, aes(Caserate_std, w_Caserate_std,color=label, label=GEOID))+ 
+  theme_fivethirtyeight() +
+  geom_point(size=5)+ 
+  geom_hline(yintercept = 0, linetype = 'dashed')+ 
+  geom_vline(xintercept = 0, linetype = 'dashed')+ 
+  scale_colour_manual(values=c( "red","skyblue",  "#FFFFFF"))+ 
+  labs(x = "Case Rates", y="Spatially Lagged Case Rates")+ 
+  theme(axis.text=element_text(size=18),axis.title=element_text(size=18,face="bold"), legend.text=element_text(size=15))+
+  theme(legend.title=element_blank())+
+  ggtitle("Moran's I: 0.31943")
+```
+```{r, echo=F, message=F,fig.height = 4, fig.width = 5}
+ggplotly(g1, tooltip = c("label", "x", "y"))
+```
+  
+The Moran's I from the dataset is 0.31943. According to this result, 0.4574 was inside the critical region and one can reject the null hypothesis. In conclusion, the data is not randomly distributed over space.
+  
+```{r, echo=F, message=F,fig.height = 4, fig.width = 5}
+tm_shape(covid19_chitown)+
+  tm_polygons("label",  
+              palette = c( "red","skyblue",  "#FFFFFF") ,
+              alpha=0.4, 
+              title="LISA map - Case Rates",
+              popup.vars=c("Share of people 60 or older"="above60",
+                           "Population Density"="popdens",
+                           "Share of houses with 4 or more people"="crowdedHH",
+                           "Share of people with health insurance"="HIcov",
+                           "Share of people living below the poverty line"="belowpov",
+                           "Test Rate"="test_rate"))+
+  tm_basemap(server="OpenStreetMap",alpha=0.5)
+```
+  
+This LISA map explains that the most significant neighborhoods for case rates is around the central west side of Chicago
+  
+# Regression Analysis
+
+Here is where I write my model 
+
+\begin{equation}
+\text{Death rate}_{i}=\beta_{0}+\beta_{1}popdens_{i}+\beta_{2}above60_{i}+
+\beta_{3}crowdedHH_{i}+\beta_{4}HIcov_{i}+\beta_{5}
+belowpov_{i}+\varepsilon 
+\end{equation}
+
+where $popdens_{i}$ is the population density in zip code $i$,$above60_{i}$ is the share of people 60 or older in zip code $i$,$crowdedHH_{i}$ is the share of houses with 4 or more people in zip code $i$, and $HIcov_{i}$ is the share of people with health insurance in zip code $i$.
+
+
+\begin{equation}
+\text{Case rate}_{i}=\beta_{0}+\beta_{1}testrate_{i}+\beta_{2}above60_{i}+
+\beta_{3}crowdedHH_{i}+\beta_{4}HIcov_{i}+\beta_{5}
+belowpov_{i}+\beta_{6}popdens_{i}+\varepsilon 
+\end{equation}
+
+where $testrate_{i}$ is the number of tests per 100,000 people in zip code $i$.
+
+
+Death Rate Regression
+```{r, include=F}
+reg<-lm(Deathrate~above60+popdens+crowdedHH+HIcov+belowpov, data=covid19_chitown@data)
+```
+```{r,include=T}
+summary(reg)
+```
+  
+The regression for death rates illustrates that variables, population density, crowded households, share of people with health insurance, and share of people below the poverty line are insignificant because they are higher than alpha is is 0.05. This regression also illustrates that there is a positive relationship between people above 60 and death rates.
+  
+Case Rate Regression
+```{r,include=F}
+reg<-lm(Caserate~above60+popdens+crowdedHH+HIcov+belowpov+test_rate, data=covid19_chitown@data)
+```
+```{r,include=T}
+summary(reg)
+```
+  
+The regression for death rates illustrates that variables, population density, share of people with health insurance, people over 60, and share of people below the poverty line are insignificant because they are higher than alpha is is 0.05. This regression also illustrates that there is a positive relationship between crowded households and test rates with death rates.
+
+# Final remarks
+  
+In conclusion, data is not randomly distributed in Chicago. Death and case rates seem to be more significant in states that are west of downtown. Some possible variables that can explain the situation could be the share of people that are over 60 years old and the share of houses with four people or more.
+
+
