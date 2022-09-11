@@ -1,7 +1,7 @@
 # COVID-19 Study
 
 ## Report
-The html file contains an interactive report based on the data findings. Download and open the html file to view the file.
+The html file contains an report with interactive maps based on the data findings. Download and open the html file to view the file.
 
 ## Code File
 The code is on the Rmd file.
